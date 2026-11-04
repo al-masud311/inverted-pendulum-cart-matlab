@@ -1,0 +1,128 @@
+INVERTED PENDULUM ON A CART - SWING-UP + DISCRETE PID  (MATLAB GUI)
+===================================================================
+
+FILES
+-----
+invertedPendulumGUI.m          the GUI + simulation (single self-contained m-file)
+images/swing_up_t0.70s.png         GUI snapshot at t = 0.70 s (swing-up phase)
+images/balanced_t3.00s.png         GUI snapshot at t = 3.00 s (balanced, cart at origin)
+docs/implementation_notes.txt     this file
+
+Tested with MATLAB R2024b, base MATLAB only (no toolboxes).
+R2019b or newer is recommended (yyaxis, getframe).
+
+
+1. HOW TO USE
+-------------
+1. Put invertedPendulumGUI.m in the MATLAB current folder and type:
+
+       invertedPendulumGUI
+
+2. Initial angle: type a value (degrees) or use the slider.
+   Range is -180 ... +180 deg. 0 = upright, +/-180 = hanging straight down,
+   positive = leaning toward +x (right).
+3. PID gains (optional): edit Kp, Ki, Kd of the ANGLE PID and of the
+   POSITION PID. These act in BALANCE mode. "Defaults" restores them.
+4. Press START. Whatever the starting angle, the cart moves so that the bob
+   ends up balanced ABOVE the cart, with the cart back at x = 0.
+   STOP aborts, Reset clears the plots, Snapshot saves the window as PNG.
+5. Display:
+   - left: animation. The bob is RED during swing-up and GREEN once the PID
+     has taken over; the text box shows t, theta, x, force and the mode.
+   - top right: kinetic (red), potential (blue) and total (black) energy
+     in ONE graph
+   - middle right: pendulum angle (left axis, deg, wrapped to +/-180) and
+     cart position (right axis, cm)
+   - bottom: status line with hand-over time, settling times, peak force.
+
+Batch use, e.g. to reproduce the snapshots:
+
+   invertedPendulumGUI('InitialAngle',180,'AutoStart',true,'SnapshotTimes',[0.7 3.0])
+
+Other options: 'SnapshotDir', 'Speed' (animation speed), 'CloseWhenDone'.
+
+
+2. SYSTEM MODEL
+---------------
+Cart M = 3 kg (horizontal motion only), massless rod L = 0.5 m, bob m = 1.5 kg,
+g = 9.81 m/s^2. theta is measured from the upright vertical. Full NONLINEAR
+equations are used (no small-angle approximation):
+
+   (M + m sin^2(th)) x'' = F + m L th'^2 sin(th) - m g sin(th) cos(th)
+   L th'' = g sin(th) - x'' cos(th)
+
+Energies (reference level = hinge height):
+   KE = 1/2 M xd^2 + 1/2 m [ (xd + L cos(th) thd)^2 + (L sin(th) thd)^2 ]
+   PE = m g L cos(th)           E = KE + PE
+E is not conserved: the cart force does work on the pendulum. It rises from
+-m g L (hanging) to +m g L = 7.36 J (upright, at rest) and stays there.
+
+
+3. CONTROL STRATEGY (two modes)
+-------------------------------
+Sample time Ts = 5 ms (200 Hz), force held constant between samples (ZOH),
+force limited to +/-1000 N. The plant is integrated with RK4.
+
+MODE 1 - SWING-UP (energy shaping)
+   The pendulum's own energy is Ep = 1/2 m L^2 thd^2 + m g L cos(th); the goal
+   is Ed = m g L. Since dEp/dt = -m L thd cos(th) x'', choosing the cart
+   acceleration
+        a = k (Ep - Ed) sign(thd cos th) - kx x - kv xd      (|a| <= 10 m/s^2)
+   pumps energy in until the pendulum arrives at the top. The kx, kv terms keep
+   the cart near the centre of the track (it stays within about +/-1 m). The
+   acceleration is converted to a force with the nonlinear model:
+        F = (M + m sin^2 th) a - m L thd^2 sin th + m g sin th cos th
+   If the pendulum hangs perfectly still (theta = 180 deg), a small rule
+   (sign(0) -> +1) gives the initial kick.
+
+MODE 2 - BALANCE (discrete PID, default gains)
+   F[k] = PID_angle(theta[k]) + PID_position(x[k])
+   PID:  u = Kp e + Ki Ts sum(e) + Kd (e[k]-e[k-1])/Ts
+   error = measurement - reference(0), so all gains are positive.
+   Position PID has the same sign by design: to move the cart left the system
+   must first push it right so the pendulum leans left.
+
+              Kp      Ki     Kd
+   Angle      1941    20     413
+   Position   1817    50     700
+
+HAND-OVER: swing-up -> PID when |theta| < 20.5 deg, |thetadot| < 8 rad/s and
+|Ep - Ed| < 0.5 Ed (integrators are reset). If |theta| ever exceeds 45 deg in
+balance mode, control falls back to swing-up. The angle is wrapped to
+(-180, 180] deg for the controller.
+
+
+4. RESULTS (default settings, simulation length 8 s)
+----------------------------------------------------
+ start angle   PID takes over   pendulum within +/-0.5 deg   cart within +/-2 cm   peak |x|   peak |F|
+ 15 deg        0.00 s           0.92 s                        0.58 s               30 cm      508 N
+ 20 deg        0.00 s           1.01 s                        0.46 s               44 cm      678 N
+ 90 deg        3.79 s           4.76 s                        4.20 s               86 cm      309 N
+ -135 deg      2.69 s           3.60 s                        3.03 s               95 cm      150 N
+ 180 deg       1.31 s           2.30 s                        1.50 s               95 cm       54 N
+
+ * Starts inside the PID's capture range (up to about 20 deg) skip swing-up
+   and are balanced in about 1 s, as in the first version.
+ * A start angle sweep from -180 to +180 deg in 10 deg steps (12 s runs,
+   separate test script) balanced successfully every time; worst case about
+   5 s, cart always within +/-1 m.
+ * Final residuals: theta ~ 0, |x| < 0.2 cm.
+
+Limitations:
+ * The 1 s balance time only holds for small starts (<= ~20 deg); a swing-up
+   from far away physically needs a few seconds because the pendulum must
+   gain energy first.
+ * Swing-up gains were tuned for these masses and length (M=3, m=1.5, L=0.5)
+   and the +/-1.2 m display range. If you change them, re-tune. A fixed
+   track length is not enforced by physics; it is kept by the centring terms.
+ * Perfect model and perfect sensing are assumed (no noise or delay).
+
+
+5. SNAPSHOTS (180 deg start, default gains)
+-------------------------------------------
+   images/swing_up_t0.70s.png : swinging up (red bob), cart at x = -0.94 m
+   images/balanced_t3.00s.png : balanced above the cart (green bob), cart at the origin,
+                         total energy settled at 7.36 J
+
+Constants (masses, length, Ts, duration, force limit, angle range, swing-up
+parameters) are at the top of invertedPendulumGUI.m.
